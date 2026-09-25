@@ -38,11 +38,8 @@ $$n_t = \tanh(W_{in} x_t + r_t \odot (W_{hn} h_{t-1} + b_{hn}))$$
 
 $$h_t = (1 - z_t) \odot n_t + z_t \odot h_{t-1}$$
 
-The bottleneck is the sigmoid and tanh. Sigmoid is defined as:
+Each GRU step does three 128×128 matrix products on the hidden state, about 49k multiply-adds, plus 384 exp()-based activations (two sigmoids and one tanh per unit). exp() is slower per call, since CPUs compute it in software with a polynomial approximation, but 384 calls are small next to 49k MACs, which the CPU handles efficiently with SIMD. So the main cost is the dense matrix, not the activations.
 
-$$\sigma(x) = \frac{1}{1 + e^{-x}}$$
-
-CPUs cannot calculate $e^{-x}$ natively. They have to approximate it with polynomials (Taylor-series-style expansions or specialized hardware approximations). That takes significantly more clock cycles than basic arithmetic and breaks the CPU's ability to keep the instruction pipeline full. For every float in the hidden state, the CPU has to stop, run the polynomial approximation, and then resume the matrix math.
 
 ### The LRU Mathematical Advantage
 
@@ -54,9 +51,9 @@ Here $\lambda$, $h_t$, and $B$ are complex numbers (`std::complex<float>`). The 
 
 $$(a + bi)(c + di) = (ac - bd) + (ad + bc)i$$
 
-That's 4 multiplications and 2 additions. No `exp()`, no polynomial approximations, no pipeline stalls. The CPU's ALU executes this with Fused Multiply-Add (FMA) instructions in a single hardware step. With `-march=native`, the compiler packs these complex numbers into SIMD registers and runs the entire hidden state update with uninterrupted efficiency.
+That's 4 multiplications and 2 additions.The CPU's ALU executes this with Fused Multiply-Add (FMA) instructions in a single hardware step. With `-march=native`, the compiler packs these complex numbers into SIMD registers and runs the entire hidden state update with uninterrupted efficiency.
 
-LRU wins because it replaces expensive, pipeline-stalling calculus with highly parallelizable, hardware-friendly arithmetic.
+LRU wins because λ is diagonal: one complex multiply per hidden unit, so the cost grows with h instead of h², roughly 4k multiply-adds per step instead of the GRU's 49k. LRU also skips the GRU's sigmoid and tanh, but that's a smaller saving; the diagonal recurrence is what matters.
 
 ### One caveat on the LRU speedup
 
@@ -66,9 +63,9 @@ The win comes from doing fewer FLOPs per step, not from parallel scans. Step-by-
 
 **Setup:** AMD Ryzen 5900X, single-threaded execution.
 
-**Workload:** 1 inference = processing a full batch of `[batch=32, sequence=300, features=7]`.
+**Workload:** 1 inference = processing one window of `[sequence=300, features=7]`.
 
-The table below compares an unoptimized C++ build (no flags) against a heavily optimized build (`-O3 -march=native -ffast-math`). Showing both lets you see what the architecture contributes and what the compiler contributes.
+The table below compares an unoptimized C++ build (no flags) against a heavily optimized build (`-O3 -march=native -ffast-math`). Showing both lets you see what the architecture contributes and what the compiler contributes. (Median of 20 runs)
 
 | Frequency | Model | Latency (Unoptimized) | Latency (Optimized) | CPU (Unoptimized) | CPU (Optimized) |
 |-----------|-------|------------------------|----------------------|--------------------|------------------|
