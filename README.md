@@ -120,8 +120,13 @@ The GRU loader is heavier — it has to correctly offset and map several sets of
 
 ## Build & Run
 
+### Compilation & Target Architecture
 ```bash
-g++ -O3 -march=native -ffast-math *.cpp -o inference_benchmark
+# Production optimized build
+g++ -std=c++20 -O3 -march=native -ffast-math -flto main.cpp -o inference_benchmark
+
+# Optional: Inspect SIMD auto-vectorization passes
+g++ -std=c++20 -O3 -march=native -fopt-info-vec-optimized main.cpp -o inference_benchmark
 
 ./inference_benchmark --model_path weights/gru_model.bin
 ./inference_benchmark --model_path weights/lru_model.bin
@@ -129,7 +134,7 @@ g++ -O3 -march=native -ffast-math *.cpp -o inference_benchmark
 
 Compiler flags do most of the heavy lifting on this workload:
 
-- `-march=native` unlocks AVX2/AVX-512 instructions, so the CPU can compute 8–16 floating-point ops per cycle instead of one.
+- `-march=native` targets host vector pipelines (256-bit AVX2 on Zen 3 processing 8 single-precision floats per instruction; scales to 16 on AVX-512 hardware) instead of serial scalar ops.
 - `-ffast-math` relaxes strict IEEE 754 compliance, letting the compiler reorder math operations to keep the execution pipeline full. Fine for a perf demo; revisit before any production use since it changes NaN/Inf handling.
 
 ## Conclusion
